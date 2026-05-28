@@ -1,0 +1,129 @@
+/// 論理チャンネル (Virtual Channel, VCH)
+///
+/// 物理チャンネルは 2ch だが、アルペジエータが高速に切り替えることで
+/// 論理的には 4ch として動作する。
+
+/// 楽器タイプ
+#[derive(Debug, Clone, PartialEq)]
+pub enum Instrument {
+    /// 通常の矩形波音源
+    Square,
+    /// 短音パーカッション / クリック (CH-D / VCH4)
+    Percussion,
+}
+
+/// 論理チャンネルの状態
+#[derive(Debug, Clone)]
+pub struct VirtualChannel {
+    /// チャンネル番号 (1-4)
+    pub id: u8,
+    /// 有効フラグ
+    pub enabled: bool,
+    /// 発振周波数 [Hz]
+    pub frequency_hz: f32,
+    /// 音量 [0.0, 1.0]
+    pub volume: f32,
+    /// ゲート: true = 発音中
+    pub gate_open: bool,
+    /// ゲートが閉じる時刻 [秒]
+    pub gate_close_time: f32,
+    /// 優先度 (値が大きいほど高優先)
+    pub priority: u32,
+    /// 楽器タイプ
+    pub instrument: Instrument,
+}
+
+impl VirtualChannel {
+    pub fn new(id: u8) -> Self {
+        let instrument = if id == 4 {
+            Instrument::Percussion
+        } else {
+            Instrument::Square
+        };
+        Self {
+            id,
+            enabled: false,
+            frequency_hz: 440.0,
+            volume: 1.0,
+            gate_open: false,
+            gate_close_time: f32::MAX,
+            priority: (4 - id as u32) * 3 + 1, // VCH1=10, VCH2=7, VCH3=4, VCH4=1
+            instrument,
+        }
+    }
+
+    /// このチャンネルが現在発音中かどうか
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.enabled && self.gate_open
+    }
+
+    /// ノートオン: 周波数・音量を設定してゲートを開く
+    pub fn note_on(&mut self, frequency_hz: f32, volume: f32, gate_close_time: f32) {
+        self.enabled = true;
+        self.frequency_hz = frequency_hz;
+        self.volume = volume.clamp(0.0, 1.0);
+        self.gate_open = true;
+        self.gate_close_time = gate_close_time;
+    }
+
+    /// ゲートを閉じる（サステインフェーズ終了）
+    pub fn close_gate(&mut self) {
+        self.gate_open = false;
+    }
+
+    /// チャンネルをリセット
+    pub fn reset(&mut self) {
+        self.enabled = false;
+        self.gate_open = false;
+        self.gate_close_time = f32::MAX;
+    }
+
+    /// 現在時刻に基づいてゲートを更新する
+    pub fn update_gate(&mut self, current_time: f32) {
+        if self.gate_open && current_time >= self.gate_close_time {
+            self.gate_open = false;
+        }
+    }
+}
+
+/// 4つの論理チャンネルを管理するコンテナ
+pub struct VirtualChannels {
+    pub channels: [VirtualChannel; 4],
+}
+
+impl VirtualChannels {
+    pub fn new() -> Self {
+        Self {
+            channels: [
+                VirtualChannel::new(1),
+                VirtualChannel::new(2),
+                VirtualChannel::new(3),
+                VirtualChannel::new(4),
+            ],
+        }
+    }
+
+    /// 全チャンネルのゲートを時刻に基づいて更新
+    pub fn update_gates(&mut self, current_time: f32) {
+        for ch in &mut self.channels {
+            ch.update_gate(current_time);
+        }
+    }
+
+    /// 指定チャンネル (1-4) への参照
+    pub fn get(&self, id: u8) -> &VirtualChannel {
+        &self.channels[(id.clamp(1, 4) - 1) as usize]
+    }
+
+    /// 指定チャンネル (1-4) への可変参照
+    pub fn get_mut(&mut self, id: u8) -> &mut VirtualChannel {
+        &mut self.channels[(id.clamp(1, 4) - 1) as usize]
+    }
+}
+
+impl Default for VirtualChannels {
+    fn default() -> Self {
+        Self::new()
+    }
+}

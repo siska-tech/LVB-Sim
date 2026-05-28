@@ -1,0 +1,156 @@
+# ─────────────────────────────────────────────────
+# LVB-Sim サンプル: BassLock デモ
+#
+# Phase 2 検証用。BassLock モードで疑似 4ch を体験。
+# VCH1: リードメロディ (Twinkle Twinkle ベース)
+# VCH2: ベースライン (C メジャーコード根音)
+# VCH3: 和音 (コードトーン)
+# VCH4: パーカッション (クリック)
+# ─────────────────────────────────────────────────
+title: "BassLock Demo (Pseudo 4CH)"
+author: "LVB-Sim"
+tempo: 120
+
+tracks:
+  - channel: 1         # VCH1: リードメロディ
+    priority: 10
+    instrument: square
+    events:
+      - {note: "C4", length: 4}
+      - {note: "C4", length: 4}
+      - {note: "G4", length: 4}
+      - {note: "G4", length: 4}
+      - {note: "A4", length: 4}
+      - {note: "A4", length: 4}
+      - {note: "G4", length: 2}
+      - {rest: true, length: 4}
+
+      - {note: "F4", length: 4}
+      - {note: "F4", length: 4}
+      - {note: "E4", length: 4}
+      - {note: "E4", length: 4}
+      - {note: "D4", length: 4}
+      - {note: "D4", length: 4}
+      - {note: "C4", length: 2}
+      - {rest: true, length: 4}
+
+      - {note: "G4", length: 4}
+      - {note: "G4", length: 4}
+      - {note: "F4", length: 4}
+      - {note: "F4", length: 4}
+      - {note: "E4", length: 4}
+      - {note: "E4", length: 4}
+      - {note: "D4", length: 2}
+      - {rest: true, length: 4}
+
+      - {note: "G4", length: 4}
+      - {note: "G4", length: 4}
+      - {note: "F4", length: 4}
+      - {note: "F4", length: 4}
+      - {note: "E4", length: 4}
+      - {note: "E4", length: 4}
+      - {note: "D4", length: 2}
+      - {rest: true, length: 4}
+
+  - channel: 2         # VCH2: ベース (BassLock で CHB に固定)
+    priority: 8
+    instrument: square
+    events:
+      - {note: "C3", length: 2}
+      - {note: "C3", length: 2}
+      - {note: "G3", length: 2}
+      - {note: "G3", length: 2}
+      - {note: "A3", length: 2}
+      - {note: "A3", length: 2}
+      - {note: "G3", length: 2}
+      - {note: "F3", length: 2}
+      - {note: "F3", length: 2}
+      - {note: "E3", length: 2}
+      - {note: "E3", length: 2}
+      - {note: "D3", length: 2}
+      - {note: "D3", length: 2}
+      - {note: "C3", length: 2}
+      - {note: "G3", length: 2}
+      - {note: "G3", length: 2}
+      - {note: "F3", length: 2}
+      - {note: "F3", length: 2}
+      - {note: "E3", length: 2}
+      - {note: "E3", length: 2}
+      - {note: "D3", length: 2}
+      - {note: "G3", length: 2}
+      - {note: "G3", length: 2}
+      - {note: "F3", length: 2}
+      - {note: "F3", length: 2}
+      - {note: "E3", length: 2}
+      - {note: "E3", length: 2}
+      - {note: "D3", length: 2}
+
+  - channel: 3         # VCH3: 和音 (CHA に時分割で挿入)
+    priority: 5
+    instrument: square
+    events:
+      - {note: "E4", length: 2}
+      - {note: "G4", length: 2}
+      - {note: "D4", length: 2}
+      - {note: "B4", length: 2}
+      - {note: "C5", length: 2}
+      - {note: "E4", length: 2}
+      - {note: "D4", length: 1}
+      - {note: "A4", length: 2}
+      - {note: "C5", length: 2}
+      - {note: "G4", length: 2}
+      - {note: "B4", length: 2}
+      - {note: "A4", length: 2}
+      - {note: "F4", length: 2}
+      - {note: "G4", length: 1}
+      - {note: "D4", length: 2}
+      - {note: "B4", length: 2}
+      - {note: "A4", length: 2}
+      - {note: "G4", length: 2}
+      - {note: "B4", length: 2}
+      - {note: "A4", length: 2}
+      - {note: "G4", length: 1}
+      - {note: "D4", length: 2}
+      - {note: "B4", length: 2}
+      - {note: "A4", length: 2}
+      - {note: "G4", length: 2}
+      - {note: "B4", length: 2}
+      - {note: "A4", length: 2}
+      - {note: "G4", length: 1}
+
+  - channel: 4         # VCH4: パーカッション
+    priority: 3
+    instrument: percussion
+    events:
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "C5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}

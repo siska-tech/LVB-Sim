@@ -1,0 +1,17 @@
+# Normalize line endings to LF in the repository
+* text=auto eol=lf
+
+# Rust source files
+*.rs    text eol=lf
+*.toml  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.csv   text eol=lf
+*.mmml  text eol=lf
+
+# Binary files
+*.wav   binary
+*.png   binary
+*.jpg   binary

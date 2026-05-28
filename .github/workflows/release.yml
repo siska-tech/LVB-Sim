@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+            suffix: .exe
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            archive: tar.gz
+            suffix: ""
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+            suffix: ""
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+            suffix: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl-tools (Linux only)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+        working-directory: lvb-sim
+
+      - name: Package (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $bin = "lvb-sim/target/${{ matrix.target }}/release/lvb-sim.exe"
+          $dir = "lvb-sim-${{ github.ref_name }}-${{ matrix.target }}"
+          New-Item -ItemType Directory $dir
+          Copy-Item $bin "$dir/"
+          Copy-Item README.md "$dir/"
+          Copy-Item LICENSE "$dir/"
+          Copy-Item -Recurse lvb-sim/examples "$dir/examples"
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+
+      - name: Package (Unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          bin="lvb-sim/target/${{ matrix.target }}/release/lvb-sim"
+          dir="lvb-sim-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir "$dir"
+          cp "$bin" "$dir/"
+          cp README.md LICENSE "$dir/"
+          cp -r lvb-sim/examples "$dir/examples"
+          tar czf "$dir.tar.gz" "$dir"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lvb-sim-${{ matrix.target }}
+          path: lvb-sim-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

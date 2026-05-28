@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────────────
+# LVB-Sim サンプル: シンプル 2ch ビーパー
+#
+# Phase 1 検証用。2ch の矩形波 BGM。
+# CH-A (VCH1): C メジャースケール上昇
+# CH-B (VCH2): C メジャーコード根音
+# ─────────────────────────────────────────────────
+title: "Simple 2CH Demo"
+author: "LVB-Sim"
+tempo: 120
+
+tracks:
+  - channel: 1         # VCH1: メロディ
+    priority: 10
+    instrument: square
+    events:
+      - {note: "C4", length: 4}
+      - {note: "D4", length: 4}
+      - {note: "E4", length: 4}
+      - {note: "F4", length: 4}
+      - {note: "G4", length: 4}
+      - {note: "A4", length: 4}
+      - {note: "B4", length: 4}
+      - {note: "C5", length: 2}
+      - {rest: true, length: 2}
+
+      # 下降
+      - {note: "C5", length: 4}
+      - {note: "B4", length: 4}
+      - {note: "A4", length: 4}
+      - {note: "G4", length: 4}
+      - {note: "F4", length: 4}
+      - {note: "E4", length: 4}
+      - {note: "D4", length: 4}
+      - {note: "C4", length: 1}
+
+  - channel: 2         # VCH2: ベース
+    priority: 8
+    instrument: square
+    events:
+      - {note: "C3", length: 1}    # 全音符 C
+      - {note: "C3", length: 1}
+      - {note: "G3", length: 1}    # 転回形
+      - {note: "C3", length: 1}

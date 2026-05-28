@@ -1,0 +1,102 @@
+# ─────────────────────────────────────────────────
+# LVB-Sim サンプル: 疑似 4ch デモ (Pseudo4 モード)
+#
+# 120Hz / 240Hz でのアルペジオ聴感比較用。
+# シンプルな C メジャーコード + ベースライン + 対旋律。
+# ─────────────────────────────────────────────────
+title: "Pseudo 4CH Demo"
+author: "LVB-Sim"
+tempo: 100
+
+tracks:
+  - channel: 1         # VCH1: メロディ
+    priority: 10
+    instrument: square
+    events:
+      - {note: "E5", length: 4}
+      - {note: "D5", length: 4}
+      - {note: "C5", length: 4}
+      - {note: "D5", length: 4}
+      - {note: "E5", length: 4}
+      - {note: "E5", length: 4}
+      - {note: "E5", length: 2}
+      - {rest: true, length: 4}
+
+      - {note: "D5", length: 4}
+      - {note: "D5", length: 4}
+      - {note: "D5", length: 2}
+      - {rest: true, length: 4}
+
+      - {note: "E5", length: 4}
+      - {note: "G5", length: 4}
+      - {note: "G5", length: 2}
+      - {rest: true, length: 4}
+
+  - channel: 2         # VCH2: ベース
+    priority: 8
+    instrument: square
+    events:
+      - {note: "C3", length: 1}
+      - {note: "C3", length: 1}
+      - {note: "G3", length: 1}
+      - {note: "C3", length: 1}
+
+  - channel: 3         # VCH3: 対旋律 / 和声
+    priority: 6
+    instrument: square
+    events:
+      - {note: "G4", length: 4}
+      - {note: "F4", length: 4}
+      - {note: "E4", length: 4}
+      - {note: "F4", length: 4}
+      - {note: "G4", length: 4}
+      - {note: "G4", length: 4}
+      - {note: "G4", length: 2}
+      - {rest: true, length: 4}
+
+      - {note: "F4", length: 4}
+      - {note: "F4", length: 4}
+      - {note: "F4", length: 2}
+      - {rest: true, length: 4}
+
+      - {note: "G4", length: 4}
+      - {note: "B4", length: 4}
+      - {note: "B4", length: 2}
+      - {rest: true, length: 4}
+
+  - channel: 4         # VCH4: リズムクリック
+    priority: 4
+    instrument: percussion
+    events:
+      - {note: "A5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "A5", length: 16, gate: 0.03}
+      - {rest: true, length: 16}
+      - {note: "A5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "A5", length: 16, gate: 0.03}
+      - {rest: true, length: 16}
+      - {note: "A5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "A5", length: 16, gate: 0.03}
+      - {rest: true, length: 16}
+      - {note: "A5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "A5", length: 16, gate: 0.03}
+      - {rest: true, length: 16}
+      - {note: "A5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "A5", length: 16, gate: 0.03}
+      - {rest: true, length: 16}
+      - {note: "A5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "A5", length: 16, gate: 0.03}
+      - {rest: true, length: 16}
+      - {note: "A5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "A5", length: 16, gate: 0.03}
+      - {rest: true, length: 16}
+      - {note: "A5", length: 8, gate: 0.05}
+      - {rest: true, length: 8}
+      - {note: "A5", length: 16, gate: 0.03}
+      - {rest: true, length: 16}
