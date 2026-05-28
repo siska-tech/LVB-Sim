@@ -5,7 +5,7 @@
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 
-use crate::virtual_channel::Instrument;
+use crate::virtual_channel::{DrumType, Instrument};
 
 // ─────────────────────────────────────────────────────────
 // コアデータ型
@@ -20,12 +20,14 @@ pub struct SongEvent {
     pub gate_close_secs: f32,
     /// 対象論理チャンネル (1-4)
     pub vchannel: u8,
-    /// 発振周波数 [Hz]
+    /// 発振周波数 [Hz] (Percussion では参照値のみ)
     pub frequency_hz: f32,
     /// 音量 [0.0, 1.0]
     pub volume: f32,
     /// 楽器タイプ
     pub instrument: Instrument,
+    /// ドラム種別 (Percussion のみ Some; None の場合は周波数フォールバックを使用)
+    pub drum_type: Option<DrumType>,
 }
 
 /// 曲全体のシーケンス
@@ -211,6 +213,7 @@ impl Sequence {
                         frequency_hz: freq,
                         volume,
                         instrument: instrument.clone(),
+                        drum_type: None, // YAML は周波数フォールバックに委ねる
                     });
                 }
 

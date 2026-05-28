@@ -21,6 +21,7 @@
 | **VIA レジスタログ**    | Timer ラッチ値を CSV で出力（実機移植用）                      |
 | **CPU 負荷推定**        | 1MHz / 500kHz / 2MHz W65C02S 想定の負荷率を概算                |
 | **ベンチマーク比較**    | 複数モード × 複数アルペジオレートを一括比較                    |
+| **パーカッション再合成** | μMML CH4 サンプル ID を 1-bit 波形データで独立再生             |
 
 ---
 
@@ -151,6 +152,26 @@ tracks:
 Protodome氏 の [mmml](https://github.com/protodome/mmml) フォーマットに対応。  
 `@` でチャンネルを区切り、最大 4ch (A/B/C/D) を入力できます。
 
+#### CH4 パーカッションサンプルマップ
+
+CH4 (パーカッションチャンネル) では音符の**音程ではなくサンプル ID** が使われます。  
+`c`〜`e` の note nibble がそのままサンプル番号に対応します。
+
+| 音符 | sample_id | ドラム種別 | 長さ  |
+| ---- | --------- | ---------- | ----- |
+| `c`  | 1         | bwoop      | ~21ms |
+| `c+` | 2         | beep       | ~15ms |
+| `d`  | 3         | kick       | ~33ms |
+| `d+` | 4         | snare      | ~30ms |
+| `e`  | 5         | hi-hat     | ~7ms  |
+
+```mmml
+@ t255                      % CH-A: 無音
+@ t255                      % CH-B: 無音
+@ t255                      % CH-C: 無音
+@ t52 [4 d8 e8 d+8 e8]     % CH-D: kick / hihat / snare パターン
+```
+
 ---
 
 ## 出力ファイル
@@ -220,13 +241,18 @@ lvb-sim/
 │   │   ├── mod.rs
 │   │   └── parser.rs     mmml / μMML パーサ
 │   ├── renderer.rs       レンダリングエンジン
+│   ├── percussion.rs     パーカッション 1-bit サンプル再生器
 │   ├── cpu_load.rs       CPU 負荷推定
 │   ├── spectral.rs       スペクトル分析
 │   └── benchmark.rs      ベンチマーク比較ランナー
 └── examples/
-    ├── simple_2ch.yaml   シンプル 2ch デモ
+    ├── simple_2ch.yaml    シンプル 2ch デモ
     ├── basslock_demo.yaml BassLock 疑似 4ch デモ
-    └── pseudo4_demo.yaml  Pseudo4 モード比較デモ
+    ├── pseudo4_demo.yaml  Pseudo4 モード比較デモ
+    ├── drum_test.mmml     パーカッションサンプル単体テスト
+    ├── lumen_drop.mmml    パズル風BGMテスト
+    ├── lumen_drop2.mmml   パズル風BGMテスト (3CH削除)
+    └── iron_citadel.mmml  アクションゲーム風BGMテスト
 
 docs/
 └── requirements.md       要件定義書

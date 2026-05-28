@@ -13,6 +13,7 @@ mod beeper;
 mod benchmark;
 mod cpu_load;
 mod mml;
+mod percussion;
 mod piezo_model;
 mod renderer;
 mod sequence;

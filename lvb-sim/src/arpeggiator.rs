@@ -213,7 +213,7 @@ mod tests {
         ];
         for (i, &a) in active.iter().enumerate() {
             if a {
-                vchs[i].note_on(440.0, 1.0, f32::MAX);
+                vchs[i].note_on(440.0, 1.0, f32::MAX, 0.0);
             }
         }
         vchs

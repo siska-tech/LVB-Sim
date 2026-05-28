@@ -2,6 +2,9 @@
 ///
 /// 実機では VIA Timer がトグルする PB7/CB2 出力を模擬する。
 /// 位相は周波数変更時にリセットしない（実機のタイマーと同様）。
+///
+/// パーカッションは `percussion::PercussionPlayer` が担当する。
+/// このモジュールはトーンチャンネル (CH-A / CH-B) 専用。
 
 #[derive(Debug, Clone)]
 pub struct BeeperChannel {
@@ -41,21 +44,13 @@ impl BeeperChannel {
     }
 
     /// 1 サンプル生成する
-    ///
-    /// 位相は常に進める（ゲートが閉じていても）。
-    /// これにより、ゲート再開時の不連続を最小化する。
     pub fn generate_sample(&mut self, sample_rate: f32) -> f32 {
         let out = if self.gate && self.frequency_hz > 0.0 {
-            if self.phase < self.duty {
-                self.volume
-            } else {
-                -self.volume
-            }
+            if self.phase < self.duty { self.volume } else { -self.volume }
         } else {
             0.0
         };
 
-        // 位相を進める
         if self.frequency_hz > 0.0 && sample_rate > 0.0 {
             self.phase += self.frequency_hz / sample_rate;
             while self.phase >= 1.0 {
@@ -88,12 +83,10 @@ mod tests {
         ch.set_state(1000.0, 1.0, true);
         let sr = 48000.0f32;
 
-        // 1000 Hz サイン波のサンプル数 = 48000/1000 = 48 サンプル/周期
-        // 最初の半周期は +1.0、次の半周期は -1.0
+        // 1000 Hz: 48000/1000 = 48 サンプル/周期, 最初の半周期は +1.0
         let samples: Vec<f32> = (0..48).map(|_| ch.generate_sample(sr)).collect();
         let positive_count = samples.iter().filter(|&&s| s > 0.5).count();
         let negative_count = samples.iter().filter(|&&s| s < -0.5).count();
-        // 50% デューティなので各半々
         assert!((positive_count as i32 - 24).abs() <= 1);
         assert!((negative_count as i32 - 24).abs() <= 1);
     }
@@ -105,5 +98,31 @@ mod tests {
         for _ in 0..100 {
             assert_eq!(ch.generate_sample(48000.0), 0.0);
         }
+    }
+
+    #[test]
+    fn test_frequency_change_no_phase_reset() {
+        // 実機 VIA Timer は周波数変更時に位相をリセットしない
+        let mut ch = BeeperChannel::new();
+        ch.set_state(1000.0, 1.0, true);
+        let sr = 48000.0f32;
+
+        // 少し進める
+        for _ in 0..12 {
+            ch.generate_sample(sr);
+        }
+        let phase_before = ch.phase;
+
+        // 周波数変更後も位相は変わらない
+        ch.set_state(2000.0, 1.0, true);
+        assert_eq!(ch.phase, phase_before, "周波数変更で位相がリセットされてはならない");
+    }
+
+    #[test]
+    fn test_volume_scaling() {
+        let mut ch = BeeperChannel::new();
+        ch.set_state(1000.0, 0.5, true);
+        let s = ch.generate_sample(48000.0);
+        assert!((s.abs() - 0.5).abs() < 1e-6, "音量 0.5 → 振幅 0.5: {}", s);
     }
 }
