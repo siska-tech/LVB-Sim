@@ -10,11 +10,12 @@ use anyhow::Result;
 use crate::arpeggiator::{ArpMode, Arpeggiator};
 use crate::beeper::BeeperChannel;
 use crate::cpu_load::{CpuLoad, CpuLoadConfig, CpuLoadEstimator, CpuLoadSample};
+use crate::percussion::PercussionPlayer;
 use crate::piezo_model::{DriveMode, PiezoModel};
 use crate::sequence::{Sequence, SongEvent};
 use crate::spectral::SpectralMetrics;
 use crate::via::ViaEmulator;
-use crate::virtual_channel::{VirtualChannels};
+use crate::virtual_channel::{Instrument, VirtualChannels};
 
 // ─────────────────────────────────────────────────────────
 // 設定
@@ -198,6 +199,9 @@ impl Renderer {
         let samples_per_arp = sr as f32 / self.config.arp_rate_hz;
         let mut arp_accum = 0.0f32;
 
+        // 独立パーカッション再生器 (アルペジエータから分離)
+        let mut perc_player = PercussionPlayer::new();
+
         // 統計
         let total_events = events.len() as u32;
         let mut played_events = 0u32;
@@ -216,7 +220,17 @@ impl Renderer {
             while event_idx < events.len() && events[event_idx].time_secs <= t {
                 let ev: &SongEvent = &events[event_idx];
                 let vch = vchs.get_mut(ev.vchannel);
-                vch.note_on(ev.frequency_hz, ev.volume, ev.gate_close_secs);
+                vch.note_on(ev.frequency_hz, ev.volume, ev.gate_close_secs, t);
+                // mmml パーサーが解決した sample_id ベースの DrumType を優先する
+                if let Some(dt) = &ev.drum_type {
+                    vch.drum_type = dt.clone();
+                }
+                // パーカッションは PercussionPlayer が独立して再生する
+                if ev.instrument == Instrument::Percussion {
+                    let fallback = vch.drum_type.clone();
+                    let drum_type = ev.drum_type.as_ref().unwrap_or(&fallback);
+                    perc_player.trigger(ev.volume, drum_type);
+                }
                 played_events += 1;
                 cpu_est.record_music_tick();
                 event_idx += 1;
@@ -233,10 +247,12 @@ impl Renderer {
                 via_write_before = via.log.len();
 
                 // CHA 更新
+                // パーカッション (VCH4) は PercussionPlayer が担当するため、
+                // BeeperChannel へは渡さず VIA 書き込みもしない
                 match assignment.cha_idx {
                     Some(idx) => {
                         let vch = &vchs.channels[idx];
-                        if vch.is_active() {
+                        if vch.is_active() && vch.instrument != Instrument::Percussion {
                             cha.set_state(vch.frequency_hz, vch.volume, true);
                             via.set_channel_a(vch.frequency_hz, t_us);
                         } else {
@@ -250,7 +266,7 @@ impl Renderer {
                 match assignment.chb_idx {
                     Some(idx) => {
                         let vch = &vchs.channels[idx];
-                        if vch.is_active() {
+                        if vch.is_active() && vch.instrument != Instrument::Percussion {
                             chb.set_state(vch.frequency_hz, vch.volume, true);
                             via.set_channel_b(vch.frequency_hz, t_us);
                         } else {
@@ -268,9 +284,18 @@ impl Renderer {
             }
 
             // ─ 4. PCM サンプル生成 ────────────────────────────
+            // 元機は 4ch 均等出力。本シミュレータの構成:
+            //   CHA / CHB: トーン VCH をアルペジオで時分割 → 双極性 [-1, 1]
+            //   PercussionPlayer: VCH4 を独立再生        → 単極性 [0, 1]
+            //
+            // 混合比: tone×0.35 + perc×0.45
+            //   トーン最大: (1+1)×0.35 = 0.70
+            //   パーカッション最大: 1×0.45 = 0.45
+            //   同時最大: 1.15 → 圧電モデルのクランプで吸収
             let a = cha.generate_sample(sr as f32);
             let b = chb.generate_sample(sr as f32);
-            samples[i] = (a + b) * 0.5;
+            let p = perc_player.generate_sample();
+            samples[i] = (a + b) * 0.35 + p * 0.45;
 
             // ─ 5. CPU ログを 1 秒ごとに記録 ──────────────────
             if t - last_cpu_log_time >= 1.0 {
@@ -286,7 +311,6 @@ impl Renderer {
         }
 
         // ─── 5. 圧電フィルタ適用 + スペクトル分析 ─────────────
-        // 圧電有効時: フィルタ前のサンプルを保存して差分を計測
         let spectral = if self.config.piezo_enabled {
             let raw_samples = samples.clone();
             piezo.process_buffer(&mut samples);

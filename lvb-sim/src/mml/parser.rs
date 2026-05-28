@@ -4,13 +4,17 @@
 ///   1. `%` コメントをストリップ
 ///   2. `@` でチャンネル / マクロに分割
 ///   3. ループ [n...] とマクロ m1〜m255 を展開
-///   4. 展開済みテキストを音符イベントに変換
-///   5. Sequence を構築
+///   4. 全チャンネルからグローバルテンポタイムラインを構築
+///   5. 展開済みテキストをグローバルテンポを参照して音符イベントに変換
+///   6. Sequence を構築
+///
+/// テンポはグローバル変数として扱われる (実機 mmml エンジンと同様)。
+/// いずれかのチャンネルで `t<n>` が現れると、全チャンネルのテンポが即時変わる。
 
 use anyhow::{anyhow, Result};
 
 use crate::sequence::{Sequence, SongEvent};
-use crate::virtual_channel::Instrument;
+use crate::virtual_channel::{DrumType, Instrument};
 
 // ─────────────────────────────────────────────────────────
 // mmml 周波数テーブル
@@ -120,10 +124,7 @@ fn expand(text: &str, macros: &[String], depth: u32) -> String {
                     if midx >= 1 && midx <= macros.len() {
                         let macro_text = macros[midx - 1].clone();
                         let expanded = expand_loops_only(&macro_text, depth + 1);
-                        // \x01/\x02 でテンポのスコープを囲む (マクロ内テンポ変化を局所化)
-                        result.push('\x01');
                         result.push_str(&expanded);
-                        result.push('\x02');
                     }
                 } else {
                     result.push('m');
@@ -225,38 +226,13 @@ fn expand_loops_only(text: &str, depth: u32) -> String {
 }
 
 // ─────────────────────────────────────────────────────────
-// ステップ 4: 音符テキストの解析
+// ステップ 4: グローバルテンポタイムラインの構築
 // ─────────────────────────────────────────────────────────
 
-/// 音符テキストの解析状態
-struct ParseState {
-    octave: u8,       // 1-5 (デフォルト: 3)
-    volume: u8,       // 0-8 (デフォルト: 8 = 50% デューティ)
-    last_length: u32, // 最後に明示された長さ (デフォルト: 4 = 四分音符)
-    time_secs: f32,   // 現在の時刻 [秒] — テンポ変化に対して正確に積算
-    tempo_bpm: f32,   // 現在のテンポ
-}
-
-impl ParseState {
-    fn new(initial_tempo_bpm: f32) -> Self {
-        Self {
-            octave: 3,
-            volume: 8,
-            last_length: 4,
-            time_secs: 0.0,
-            tempo_bpm: initial_tempo_bpm,
-        }
-    }
-
-    /// 拍数を現在のテンポで秒に変換
-    fn beats_to_secs(&self, beats: f32) -> f32 {
-        beats * 60.0 / self.tempo_bpm
-    }
-
-    /// 時刻を beats 分だけ進める (テンポ変化を正しく反映)
-    fn advance(&mut self, beats: f32) {
-        self.time_secs += self.beats_to_secs(beats);
-    }
+/// 長さ値と付点から拍数を計算
+fn length_to_beats(length: u32, dotted: bool) -> f32 {
+    let base = 4.0 / length as f32;
+    if dotted { base * 1.5 } else { base }
 }
 
 /// 長さの読み取り: 現在位置から数値と付点を解析
@@ -270,40 +246,286 @@ fn read_length(chars: &[char], i: usize, default: u32) -> (u32, bool, usize) {
     (length, dotted, j)
 }
 
-/// 長さ値と付点から拍数を計算
-fn length_to_beats(length: u32, dotted: bool) -> f32 {
-    let base = 4.0 / length as f32;
-    if dotted {
-        base * 1.5
-    } else {
-        base
+/// 1 チャンネルの展開済みテキストを事前スキャンし、
+/// (絶対時刻 [秒], BPM) のリストを返す。
+///
+/// `context` が空でない場合、音符/休符の時間計算にグローバルタイムラインを参照する
+/// （二パス目で使用）。これにより他チャンネルのテンポ変化が時刻計算に反映される。
+///
+/// t255 はチャンネルローカルな終端マーカーとして扱い、グローバルタイムラインには含めない。
+fn extract_tempo_events(expanded: &str, initial_bpm: f32, context: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let chars: Vec<char> = expanded.chars().collect();
+    let mut i = 0;
+    let mut local_bpm = initial_bpm;
+    let mut time_secs = 0.0f32;
+    let mut last_length = 4u32;
+    let mut result: Vec<(f32, f32)> = Vec::new();
+
+    while i < chars.len() {
+        match chars[i] {
+            ' ' | '\t' | '\n' | '\r' => { i += 1; }
+
+            // テンポコマンド: 時刻と BPM を記録
+            // t255 はチャンネルローカルな終端マーカーのため伝播しない
+            't' if i + 1 < chars.len() && chars[i + 1].is_ascii_digit() => {
+                i += 1;
+                if let Some((n, ni)) = read_u32(&chars, i) {
+                    if n == 255 {
+                        break;
+                    }
+                    local_bpm = tempo_to_bpm(n);
+                    result.push((time_secs, local_bpm));
+                    i = ni;
+                }
+            }
+
+            // オクターブ・音量: 時間を消費しない
+            'o' if i + 1 < chars.len() && chars[i + 1].is_ascii_digit() => {
+                i += 1;
+                if let Some((_, ni)) = read_u32(&chars, i) { i = ni; }
+            }
+            'v' if i + 1 < chars.len() && chars[i + 1].is_ascii_digit() => {
+                i += 1;
+                if let Some((_, ni)) = read_u32(&chars, i) { i = ni; }
+            }
+            '>' | '<' | '&' => { i += 1; }
+
+            // 休符: 時間を消費する
+            'r' => {
+                i += 1;
+                let (length, dotted, ni) = read_length(&chars, i, last_length);
+                last_length = length;
+                i = ni;
+                let beats = length_to_beats(length, dotted);
+                let bpm = if context.is_empty() { local_bpm } else { lookup_tempo(context, time_secs) };
+                time_secs += beats * 60.0 / bpm;
+            }
+
+            // 音符: シャープを読んで時間を消費する
+            'c' | 'd' | 'e' | 'f' | 'g' | 'a' | 'b' => {
+                i += 1;
+                if i < chars.len() && chars[i] == '+' { i += 1; }
+                let (length, dotted, ni) = read_length(&chars, i, last_length);
+                last_length = length;
+                i = ni;
+                let beats = length_to_beats(length, dotted);
+                let bpm = if context.is_empty() { local_bpm } else { lookup_tempo(context, time_secs) };
+                time_secs += beats * 60.0 / bpm;
+            }
+
+            _ => { i += 1; }
+        }
+    }
+
+    result
+}
+
+/// 全チャンネルのテンポイベントをロックステップでシミュレートしてグローバルテンポタイムラインを構築する。
+///
+/// 実機 MMML エンジンと同様に全チャンネルを同時進行させ、いずれかのチャンネルが `t<n>` コマンドを
+/// 処理した時点でグローバルテンポを即時更新する。これにより各チャンネルのテンポ変化の絶対時刻が
+/// 正確に計算される。
+///
+/// t255 はチャンネルローカルな終端マーカーとして扱い、タイムラインには含めない。
+fn build_global_tempo_timeline(
+    expanded_channels: &[String],
+    initial_bpm: f32,
+) -> Vec<(f32, f32)> {
+    struct ChannelState {
+        chars: Vec<char>,
+        pos: usize,
+        time: f32,
+        last_length: u32,
+        done: bool,
+    }
+
+    let mut channels: Vec<ChannelState> = expanded_channels
+        .iter()
+        .map(|ch| ChannelState {
+            chars: ch.chars().collect(),
+            pos: 0,
+            time: 0.0,
+            last_length: 4,
+            done: false,
+        })
+        .collect();
+
+    let mut global_bpm = initial_bpm;
+    let mut timeline: Vec<(f32, f32)> = vec![(0.0, initial_bpm)];
+
+    loop {
+        // 最小時刻の未完了チャンネルを選択
+        let next_idx = channels
+            .iter()
+            .enumerate()
+            .filter(|(_, ch)| !ch.done)
+            .min_by(|(_, a), (_, b)| {
+                a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(i, _)| i);
+
+        let idx = match next_idx {
+            Some(i) => i,
+            None => break,
+        };
+
+        // 次の時間消費トークン（音符/休符）まで処理
+        let ch = &mut channels[idx];
+        let mut advanced = false;
+
+        while ch.pos < ch.chars.len() && !advanced {
+            match ch.chars[ch.pos] {
+                ' ' | '\t' | '\n' | '\r' => { ch.pos += 1; }
+
+                // テンポコマンド: グローバルテンポを即時更新
+                't' if ch.pos + 1 < ch.chars.len() && ch.chars[ch.pos + 1].is_ascii_digit() => {
+                    ch.pos += 1;
+                    if let Some((n, ni)) = read_u32(&ch.chars, ch.pos) {
+                        ch.pos = ni;
+                        if n == 255 {
+                            ch.done = true;
+                            break;
+                        }
+                        global_bpm = tempo_to_bpm(n);
+                        timeline.push((ch.time, global_bpm));
+                    }
+                }
+
+                // オクターブ・音量: 時間消費なし
+                'o' if ch.pos + 1 < ch.chars.len() && ch.chars[ch.pos + 1].is_ascii_digit() => {
+                    ch.pos += 1;
+                    if let Some((_, ni)) = read_u32(&ch.chars, ch.pos) { ch.pos = ni; }
+                }
+                'v' if ch.pos + 1 < ch.chars.len() && ch.chars[ch.pos + 1].is_ascii_digit() => {
+                    ch.pos += 1;
+                    if let Some((_, ni)) = read_u32(&ch.chars, ch.pos) { ch.pos = ni; }
+                }
+                '>' | '<' | '&' => { ch.pos += 1; }
+
+                // 休符: 時間を進める
+                'r' => {
+                    ch.pos += 1;
+                    let (length, dotted, ni) = read_length(&ch.chars, ch.pos, ch.last_length);
+                    ch.last_length = length;
+                    ch.pos = ni;
+                    let beats = length_to_beats(length, dotted);
+                    ch.time += beats * 60.0 / global_bpm;
+                    advanced = true;
+                }
+
+                // 音符: 時間を進める
+                'c' | 'd' | 'e' | 'f' | 'g' | 'a' | 'b' => {
+                    ch.pos += 1;
+                    if ch.pos < ch.chars.len() && ch.chars[ch.pos] == '+' { ch.pos += 1; }
+                    let (length, dotted, ni) = read_length(&ch.chars, ch.pos, ch.last_length);
+                    ch.last_length = length;
+                    ch.pos = ni;
+                    let beats = length_to_beats(length, dotted);
+                    ch.time += beats * 60.0 / global_bpm;
+                    advanced = true;
+                }
+
+                _ => { ch.pos += 1; }
+            }
+        }
+
+        if ch.pos >= ch.chars.len() {
+            ch.done = true;
+        }
+    }
+
+    // 時刻順にソート・重複除去
+    timeline.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut deduped: Vec<(f32, f32)> = Vec::with_capacity(timeline.len());
+    for (t, bpm) in timeline {
+        if let Some(last) = deduped.last_mut() {
+            if (last.0 - t).abs() < 1e-6 {
+                last.1 = bpm;
+                continue;
+            }
+        }
+        deduped.push((t, bpm));
+    }
+    deduped
+}
+
+/// グローバルテンポタイムラインから指定時刻の BPM を返す。
+///
+/// タイムラインは昇順ソート済みであること。
+#[inline]
+fn lookup_tempo(timeline: &[(f32, f32)], time_secs: f32) -> f32 {
+    let mut bpm = timeline[0].1;
+    for &(t, b) in timeline {
+        if t <= time_secs + 1e-9 {
+            bpm = b;
+        } else {
+            break;
+        }
+    }
+    bpm
+}
+
+// ─────────────────────────────────────────────────────────
+// ステップ 5: 音符テキストの解析
+// ─────────────────────────────────────────────────────────
+
+/// 音符テキストの解析状態
+struct ParseState {
+    octave: u8,          // 1-5 (デフォルト: 3)
+    volume: u8,          // 0-8 (デフォルト: 8 = 50% デューティ)
+    last_length: u32,    // 最後に明示された長さ (デフォルト: 4 = 四分音符)
+    time_secs: f32,      // 現在の時刻 [秒]
+    local_bpm: Option<f32>, // t255 遭遇後のチャンネルローカル BPM
+}
+
+impl ParseState {
+    fn new() -> Self {
+        Self {
+            octave: 3,
+            volume: 8,
+            last_length: 4,
+            time_secs: 0.0,
+            local_bpm: None,
+        }
+    }
+
+    /// 現在の BPM を返す: t255 以降はローカル BPM、それ以外はグローバルタイムライン
+    fn current_bpm(&self, timeline: &[(f32, f32)]) -> f32 {
+        self.local_bpm.unwrap_or_else(|| lookup_tempo(timeline, self.time_secs))
+    }
+
+    /// 現在のグローバルテンポを参照して拍数を秒に変換
+    fn beats_to_secs(&self, beats: f32, timeline: &[(f32, f32)]) -> f32 {
+        beats * 60.0 / self.current_bpm(timeline)
+    }
+
+    /// 時刻を beats 分だけ進める
+    fn advance(&mut self, beats: f32, timeline: &[(f32, f32)]) {
+        self.time_secs += self.beats_to_secs(beats, timeline);
     }
 }
 
-/// チャンネル MML テキストを解析して SongEvent のリストを生成
+/// チャンネル MML テキストを解析して SongEvent のリストを生成する。
+///
+/// テンポはグローバルタイムラインから参照する。チャンネル内の `t<n>` は
+/// 既にタイムラインに反映済みなので無視する。
 fn parse_channel(
     text: &str,
     vchannel: u8,
-    default_tempo_bpm: f32,
+    tempo_timeline: &[(f32, f32)],
     instrument: Instrument,
 ) -> Vec<SongEvent> {
     let mut events: Vec<SongEvent> = Vec::new();
-    let mut state = ParseState::new(default_tempo_bpm);
+    let mut state = ParseState::new();
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
 
-    // マクロスコープ用テンポスタック (\x01 で push, \x02 で pop)
-    let mut tempo_stack: Vec<f32> = Vec::new();
-
-    // タイ処理用: 前のイベントのインデックス
+    // タイ処理用
     let mut tie_pending = false;
     let mut last_event_idx: Option<usize> = None;
-    // タイ開始時刻 [秒]
     let mut tie_start_secs: f32 = 0.0;
-    // タイ中の合計時間 [秒]
     let mut tie_total_secs: f32 = 0.0;
 
-    // デフォルトゲート長
     let default_gate = match instrument {
         Instrument::Percussion => 0.05,
         Instrument::Square => 0.875,
@@ -318,25 +540,15 @@ fn parse_channel(
             continue;
         }
 
-        // ─── マクロスコープ: テンポを保存/復元 ─────────────
-        if c == '\x01' {
-            tempo_stack.push(state.tempo_bpm);
-            i += 1;
-            continue;
-        }
-        if c == '\x02' {
-            if let Some(saved) = tempo_stack.pop() {
-                state.tempo_bpm = saved;
-            }
-            i += 1;
-            continue;
-        }
-
-        // ─── テンポ: t<number> ──────────────────────────────
+        // ─── テンポコマンド ────────────────────────────────────
+        // 通常の t コマンド: グローバルタイムラインに反映済みなのでスキップ。
+        // t255: チャンネルローカルな終端テンポとして保持し、以降の時間計算に使用。
         if c == 't' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
             i += 1;
             if let Some((n, ni)) = read_u32(&chars, i) {
-                state.tempo_bpm = tempo_to_bpm(n);
+                if n == 255 {
+                    state.local_bpm = Some(tempo_to_bpm(255));
+                }
                 i = ni;
             }
             continue;
@@ -354,16 +566,12 @@ fn parse_channel(
 
         // ─── オクターブ上下: > / < ──────────────────────────
         if c == '>' {
-            if state.octave < 5 {
-                state.octave += 1;
-            }
+            if state.octave < 5 { state.octave += 1; }
             i += 1;
             continue;
         }
         if c == '<' {
-            if state.octave > 1 {
-                state.octave -= 1;
-            }
+            if state.octave > 1 { state.octave -= 1; }
             i += 1;
             continue;
         }
@@ -392,8 +600,7 @@ fn parse_channel(
             state.last_length = length;
             i = ni;
             let beats = length_to_beats(length, dotted);
-            state.advance(beats);
-            // タイはキャンセル
+            state.advance(beats, tempo_timeline);
             tie_pending = false;
             last_event_idx = None;
             continue;
@@ -413,7 +620,6 @@ fn parse_channel(
 
         if let Some(mut semitone) = note_semitone {
             i += 1;
-            // シャープ: c+ など
             if i < chars.len() && chars[i] == '+' {
                 semitone += 1;
                 i += 1;
@@ -425,16 +631,19 @@ fn parse_channel(
             i = ni;
 
             let duration_beats = length_to_beats(length, dotted);
-            let duration_secs = state.beats_to_secs(duration_beats);
+            let duration_secs = state.beats_to_secs(duration_beats, tempo_timeline);
             let freq = mmml_freq(semitone, state.octave);
-            let vol = if state.volume == 0 {
-                0.0
+            let vol = if state.volume == 0 { 0.0 } else { state.volume as f32 / 8.0 };
+
+            // CH4 では note semitone (0-11) が直接 sample_id (buffer1) に相当する。
+            // μMML: c=1(bwoop), c+=2(beep), d=3(kick), d+=4(snare), e=5(hi-hat)
+            let drum_type = if instrument == Instrument::Percussion {
+                Some(DrumType::from_mmml_sample_id((semitone + 1) as u8))
             } else {
-                state.volume as f32 / 8.0
+                None
             };
 
             if tie_pending {
-                // タイ: 前のノートの gate_close を延長
                 if let Some(idx) = last_event_idx {
                     tie_total_secs += duration_secs;
                     let gate_close_secs = tie_start_secs + tie_total_secs * default_gate;
@@ -442,7 +651,6 @@ fn parse_channel(
                 }
                 tie_pending = false;
             } else {
-                // 通常のノートオン
                 tie_start_secs = state.time_secs;
                 tie_total_secs = duration_secs;
                 let gate_close_secs = state.time_secs + duration_secs * default_gate;
@@ -455,10 +663,11 @@ fn parse_channel(
                     frequency_hz: freq,
                     volume: vol,
                     instrument: instrument.clone(),
+                    drum_type,
                 });
             }
 
-            state.advance(duration_beats);
+            state.advance(duration_beats, tempo_timeline);
             continue;
         }
 
@@ -470,14 +679,10 @@ fn parse_channel(
 }
 
 // ─────────────────────────────────────────────────────────
-// ステップ 5: グローバルテンポの検出
+// グローバルテンポの初期値を検出するヘルパー
 // ─────────────────────────────────────────────────────────
 
 /// 音符/休符より前に現れるテンポコマンドを探す (チャンネル初期テンポ)
-///
-/// mmml エンジンではテンポはグローバル。チャンネル D が `t46 r4` で始まる場合、
-/// t46 は演奏開始直後に全チャンネルへ即時反映される。
-/// この関数は各チャンネル先頭の音符・休符より前の `t<n>` を返す。
 fn find_initial_tempo(sections: &[String]) -> Option<f32> {
     const NOTE_CHARS: &[char] = &['c', 'd', 'e', 'f', 'g', 'a', 'b', 'r'];
     for section in sections.iter().take(4) {
@@ -489,14 +694,14 @@ fn find_initial_tempo(sections: &[String]) -> Option<f32> {
                 i += 1;
                 continue;
             }
-            // 音符・休符が来たら、このチャンネルには初期テンポなし
             if NOTE_CHARS.contains(&c) {
                 break;
             }
             if c == 't' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
                 i += 1;
                 if let Some((n, _)) = read_u32(&chars, i) {
-                    if n > 0 {
+                    // t255 はチャンネル終端マーカーなのでテンポとして扱わない
+                    if n > 0 && n != 255 {
                         return Some(tempo_to_bpm(n));
                     }
                 }
@@ -516,7 +721,7 @@ fn find_first_tempo(sections: &[String]) -> Option<f32> {
             if chars[i] == 't' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
                 i += 1;
                 if let Some((n, _)) = read_u32(&chars, i) {
-                    if n > 0 {
+                    if n > 0 && n != 255 {
                         return Some(tempo_to_bpm(n));
                     }
                 }
@@ -552,17 +757,25 @@ pub fn parse_mmml_file(content: &str) -> Result<Sequence> {
         Vec::new()
     };
 
-    // 4. グローバルテンポを検出
-    // 音符より前に t<n> があればそれを初期テンポとして採用 (mmml エンジンはテンポがグローバル)
-    // なければ全体スキャンの最初のテンポにフォールバック
-    let global_tempo_bpm = find_initial_tempo(&sections)
+    // 4. 初期テンポを決定
+    let initial_bpm = find_initial_tempo(&sections)
         .or_else(|| find_first_tempo(&sections))
         .unwrap_or(120.0);
 
-    // 5. 各チャンネルを展開・解析
+    // 5. 各チャンネルのループ+マクロを展開
+    let expanded_channels: Vec<String> = channel_sections
+        .iter()
+        .map(|&ch| expand(ch, &macro_sections, 0))
+        .collect();
+
+    // 6. グローバルテンポタイムラインを構築
+    //    いずれかのチャンネルの t コマンドが全チャンネルのテンポを変更する
+    let global_timeline = build_global_tempo_timeline(&expanded_channels, initial_bpm);
+
+    // 7. 各チャンネルを解析 (グローバルタイムラインを参照)
     let mut all_events = Vec::new();
 
-    for (ch_idx, &ch_text) in channel_sections.iter().enumerate() {
+    for (ch_idx, expanded) in expanded_channels.iter().enumerate() {
         let vchannel = (ch_idx as u8) + 1; // 1-4
         let instrument = if ch_idx == 3 {
             Instrument::Percussion
@@ -570,22 +783,18 @@ pub fn parse_mmml_file(content: &str) -> Result<Sequence> {
             Instrument::Square
         };
 
-        // マクロ + ループを展開
-        let expanded = expand(ch_text, &macro_sections, 0);
-
-        // 音符イベントに変換
-        let events = parse_channel(&expanded, vchannel, global_tempo_bpm, instrument);
+        let events = parse_channel(expanded, vchannel, &global_timeline, instrument);
         all_events.extend(events);
     }
 
-    // 6. 時刻順にソート
+    // 8. 時刻順にソート
     all_events.sort_by(|a, b| {
         a.time_secs
             .partial_cmp(&b.time_secs)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // 7. 全体の長さを計算
+    // 9. 全体の長さを計算
     let total_duration_secs = all_events
         .iter()
         .map(|e| e.gate_close_secs)
@@ -597,7 +806,7 @@ pub fn parse_mmml_file(content: &str) -> Result<Sequence> {
         author: None,
         events: all_events,
         total_duration_secs,
-        source_tempo_bpm: global_tempo_bpm,
+        source_tempo_bpm: initial_bpm,
     })
 }
 
@@ -686,5 +895,29 @@ mod tests {
         let mmml = "@ o1 m1\n@\n@\n@\n@ c4 d4"; // macro #1 = c4 d4
         let seq = parse_mmml_file(mmml).unwrap();
         assert_eq!(seq.events.len(), 2, "マクロ展開後に 2 音符");
+    }
+
+    #[test]
+    fn test_global_tempo_synchronizes_channels() {
+        // CH1 が t52 を設定 → CH2 も同じテンポで動作すること
+        // CH1: t52 c4 (quarter at ~121bpm ≈ 0.496s)
+        // CH2:     c4 (should also be at ~121bpm ≈ 0.496s)
+        let mmml = "@ t52 o1 c4\n@ o1 c4\n@\n@";
+        let seq = parse_mmml_file(mmml).unwrap();
+
+        let ch1_events: Vec<_> = seq.events.iter().filter(|e| e.vchannel == 1).collect();
+        let ch2_events: Vec<_> = seq.events.iter().filter(|e| e.vchannel == 2).collect();
+
+        assert_eq!(ch1_events.len(), 1);
+        assert_eq!(ch2_events.len(), 1);
+
+        // CH2 のゲートクローズが CH1 と同じテンポ基準であること
+        let ch1_end = ch1_events[0].gate_close_secs;
+        let ch2_end = ch2_events[0].gate_close_secs;
+        assert!(
+            (ch1_end - ch2_end).abs() < 0.01,
+            "グローバルテンポで CH1/CH2 が同期すること: ch1={:.4} ch2={:.4}",
+            ch1_end, ch2_end
+        );
     }
 }

@@ -158,8 +158,10 @@ impl PiezoModel {
             enabled: true,
             drive_mode,
             hp: Biquad::highpass(500.0, std::f64::consts::FRAC_1_SQRT_2, sr),
-            peak: Biquad::peaking(2000.0, 2.0, 6.0, sr),
-            lp: Biquad::lowpass(10000.0, std::f64::consts::FRAC_1_SQRT_2, sr),
+            // 共振ピーク: +6dB → +3dB (矩形波との組み合わせで過剰なブーストを緩和)
+            peak: Biquad::peaking(2000.0, 2.0, 3.0, sr),
+            // 帯域制限: 10kHz → 7kHz (5kHz 以上の倍音は音楽的意味が薄く耳への刺激になる)
+            lp: Biquad::lowpass(7000.0, std::f64::consts::FRAC_1_SQRT_2, sr),
             drive_gain: drive_mode.amplitude_scale(),
         }
     }
